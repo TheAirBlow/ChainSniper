@@ -14,8 +14,7 @@ var factory = new LoggerFactory().AddSerilog();
 var client = new DiscordClient(new DiscordConfiguration {
     Token = Configuration.Instance.BotToken,
     Intents = DiscordIntents.AllUnprivileged
-              | DiscordIntents.MessageContents 
-              | DiscordIntents.GuildMessages,
+              | DiscordIntents.MessageContents,
     TokenType = TokenType.Bot,
     LoggerFactory = factory
 });
@@ -27,33 +26,33 @@ client.Ready += async (_, _) => {
         "the number chain", ActivityType.Watching));
 };
 
-var dict = new Dictionary<ulong, List<ulong>>();
+var ignore = new List<ulong>();
+var dict = new Dictionary<ulong, IEnumerable<ulong>>();
 client.MessageCreated += async (_, args) => {
     var entry = Configuration.Instance.Entries.FirstOrDefault(
         x => x.ChainChannel == args.Channel.Id
              && x.Guild == args.Guild.Id);
     if (entry == null) return;
-    var ban = false; var reason = ""; ulong expected;
+    var ban = false; var reason = "";
     if (!ulong.TryParse(args.Message.Content, out var num)) {
         reason = "Not a number"; ban = true;
     }
     
-    lock (ChainManager.ChainNumber) {
-        expected = ChainManager.ChainNumber[args.Channel.Id] + 1;
-        if (!ban && num != expected) {
-            reason = "Wrong number"; ban = true;
-        }
-
-        // Increment chain number, almost forgot about that
-        if (!ban) ChainManager.ChainNumber[args.Channel.Id]++;
+    var message = (await args.Channel.GetMessagesAsync(2))[1];
+    var expected = ulong.Parse(message.Content) + 1;
+    if (!ban && num != expected) {
+        reason = "Wrong number"; ban = true;
     }
 
     if (ban) {
+        entry.Infractions++; ignore.Add(args.Message.Id);
         await args.Message.DeleteAsync();
         var failed = false;
         try {
             await args.Guild.BanMemberAsync(args.Author.Id,
                 0, $"You broke the chain: {reason}");
+            var member = await args.Guild.GetMemberAsync(args.Author.Id);
+            dict.Add(args.Author.Id, member.Roles.Select(x => x.Id));
         } catch {
             failed = true;
         }
@@ -67,21 +66,101 @@ client.MessageCreated += async (_, args) => {
             .AddField("Reason", reason, true)
             .AddField("Message", args.Message.Content, true)
             .AddField("Expected", expected.ToString(), true)
-            .AddField("Bruh", "Git Gud", true)
-            .AddField("Why", "Who knows", true);
+            .AddField("Bruh moment", "That's really stupid", true)
+            .AddField("Infractions", $"{entry.Infractions} total", true);
         if (!failed)
             embed.WithFooter("If a staff member thinks it's unfair, click the button below, roles will be given back");
         var builder = new DiscordMessageBuilder()
             .WithEmbed(embed.Build());
         if (!failed)
-            builder.AddComponents(new DiscordButtonComponent(ButtonStyle.Secondary,
+            builder.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary,
                 args.Author.Id.ToString(), "Unban member"));
         var channel = args.Guild.GetChannel(entry.LogChannel);
         await builder.SendAsync(channel);
     }
 };
 
-client.InteractionCreated += async (_, args) => {
+client.MessageUpdated += async (_, args) => {
+    var entry = Configuration.Instance.Entries.FirstOrDefault(
+        x => x.ChainChannel == args.Channel.Id
+             && x.Guild == args.Guild.Id);
+    if (entry == null) return;
+    var failed = false;
+    try {
+        await args.Guild.BanMemberAsync(args.Author.Id,
+            0, "You broke the chain: Sabotage (editing)");
+    } catch {
+        failed = true;
+    }
+
+    entry.Infractions++;
+    await args.Message.DeleteAsync();
+    var embed = new DiscordEmbedBuilder()
+        .WithColor(failed ? DiscordColor.Red : DiscordColor.Azure)
+        .WithTitle(failed
+            ? "Failed to ban a member (no permissions)"
+            : "Someone broke the chain and got sniped!")
+        .AddField("Perpetrator", args.Author.Username, true)
+        .AddField("Reason", "Sabotage (editing)", true)
+        .AddField("Message", args.Message.Content, true)
+        .AddField("Expected", "Come on man!", true)
+        .AddField("Bruh moment", "That's really stupid", true)
+        .AddField("Infractions", $"{entry.Infractions} total", true);
+    if (!failed)
+        embed.WithFooter("If a staff member thinks it's unfair, click the button below, roles will be given back");
+    var builder = new DiscordMessageBuilder()
+        .WithEmbed(embed.Build());
+    if (!failed)
+        builder.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary,
+            args.Author.Id.ToString(), "Unban member"));
+    var channel = args.Guild.GetChannel(entry.LogChannel);
+    await builder.SendAsync(channel);
+};
+
+client.MessageDeleted += async (_, args) => {
+    if (ignore.Contains(args.Message.Id)) {
+        ignore.Remove(args.Message.Id);
+        return; // Ignored
+    }
+    var entry = Configuration.Instance.Entries.FirstOrDefault(
+        x => x.ChainChannel == args.Channel.Id
+             && x.Guild == args.Guild.Id);
+    if (entry == null) return;
+    var failed = false;
+    try {
+        await args.Guild.BanMemberAsync(args.Message.Author.Id,
+            0, "You broke the chain: Sabotage (deleting)");
+    } catch {
+        failed = true;
+    }
+
+    entry.Infractions++;
+    var embed = new DiscordEmbedBuilder()
+        .WithColor(failed ? DiscordColor.Red : DiscordColor.Azure)
+        .WithTitle(failed
+            ? "Failed to ban a member (no permissions)"
+            : "Someone broke the chain and got sniped!")
+        .AddField("Perpetrator", args.Message.Author.Username, true)
+        .AddField("Reason", "Sabotage (deleting)", true)
+        .AddField("Message", args.Message.Content, true)
+        .AddField("Expected", "Come on man!", true)
+        .AddField("Bruh moment", "That's really stupid", true)
+        .AddField("Infractions", $"{entry.Infractions} total", true);
+    if (!failed)
+        embed.WithFooter("If a staff member thinks it's unfair, click the button below, roles will be given back");
+    var builder = new DiscordMessageBuilder()
+        .WithEmbed(embed.Build());
+    if (!failed)
+        builder.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary,
+            args.Message.Author.Id.ToString(), "Unban member"));
+    var channel = args.Guild.GetChannel(entry.LogChannel);
+    await builder.SendAsync(channel);
+};
+
+client.ComponentInteractionCreated += async (_, args) => {
+    Configuration.Instance.Entries.First(
+        x => x.ChainChannel == args.Channel.Id 
+             && x.Guild == args.Guild.Id).Infractions--;
     var member = await args.Interaction.Guild.GetMemberAsync(
         args.Interaction.User.Id);
     if (!member.Permissions.HasPermission(Permissions.BanMembers)) {
@@ -119,9 +198,6 @@ client.InteractionCreated += async (_, args) => {
                                  $"Requested by staff member {member.Username}")
                 .Build()));
 };
-
-Log.Information("[DisControl] Initializing chain manager");
-await ChainManager.Initialize(client);
 
 Log.Information("[DisControl] Initialization finished successfully");
 await Task.Delay(-1);

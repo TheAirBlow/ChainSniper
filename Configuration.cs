@@ -37,6 +37,7 @@ public class Configuration {
 
     public class SniperEntry {
         public ulong Guild;
+        public ulong Infractions;
         public ulong ChainChannel;
         public ulong LogChannel;
     }
