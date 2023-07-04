@@ -1,7 +1,6 @@
 ﻿using Configuration = DisControl.Configuration;
 using Microsoft.Extensions.Logging;
 using DSharpPlus.Entities;
-using DisControl;
 using DSharpPlus;
 using Serilog;
 
@@ -9,7 +8,7 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateLogger();
 
-Log.Information("[DisControl] Initializing Discord");
+Log.Information("[ChainSniper] Initializing Discord");
 var factory = new LoggerFactory().AddSerilog();
 var client = new DiscordClient(new DiscordConfiguration {
     Token = Configuration.Instance.BotToken,
@@ -19,7 +18,7 @@ var client = new DiscordClient(new DiscordConfiguration {
     LoggerFactory = factory
 });
 
-Log.Information("[DisControl] Connecting to Discord");
+Log.Information("[ChainSniper] Connecting to Discord");
 await client.ConnectAsync();
 client.Ready += async (_, _) => {
     await client.UpdateStatusAsync(new DiscordActivity(
@@ -39,6 +38,10 @@ client.MessageCreated += async (_, args) => {
     }
     
     var message = (await args.Channel.GetMessagesAsync(2))[1];
+    if (message.Author.Id == args.Author.Id) {
+        reason = "Same person"; ban = true;
+    }
+    
     var expected = ulong.Parse(message.Content) + 1;
     if (!ban && num != expected) {
         reason = "Wrong number"; ban = true;
@@ -158,9 +161,6 @@ client.MessageDeleted += async (_, args) => {
 };
 
 client.ComponentInteractionCreated += async (_, args) => {
-    Configuration.Instance.Entries.First(
-        x => x.ChainChannel == args.Channel.Id 
-             && x.Guild == args.Guild.Id).Infractions--;
     var member = await args.Interaction.Guild.GetMemberAsync(
         args.Interaction.User.Id);
     if (!member.Permissions.HasPermission(Permissions.BanMembers)) {
@@ -173,6 +173,9 @@ client.ComponentInteractionCreated += async (_, args) => {
         return;
     }
     
+    Configuration.Instance.Entries.First(
+        x => x.LogChannel == args.Channel.Id 
+             && x.Guild == args.Guild.Id).Infractions--;
     var id = ulong.Parse(args.Interaction.Data.CustomId);
     var perpetrator = await args.Interaction.Guild.GetMemberAsync(id);
     await perpetrator.UnbanAsync($"Requested by staff member {member.Username}");
